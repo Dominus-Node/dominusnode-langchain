@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dominusnode-langchain"
+version = "1.0.0"
+description = "LangChain tools for DomiNode rotating proxy service"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = [
+    "langchain-core>=0.2.0",
+    "dominusnode>=0.1.0",
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
