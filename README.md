@@ -1,6 +1,6 @@
-# DomiNode LangChain Integration
+# Dominus Node LangChain Integration
 
-LangChain tools for the [DomiNode](https://dominusnode.com) rotating proxy-as-a-service platform. Enables LangChain agents to make proxied HTTP requests, check wallet balances, monitor usage, and query proxy configuration through the DomiNode network.
+LangChain tools for the [Dominus Node](https://dominusnode.com) rotating proxy-as-a-service platform. Enables LangChain agents to make proxied HTTP requests, check wallet balances, monitor usage, and query proxy configuration through the Dominus Node network.
 
 ## Installation
 
@@ -18,14 +18,14 @@ pip install -e ".[dev]"
 ### Dependencies
 
 - `langchain-core >= 0.2.0`
-- `dominusnode >= 0.1.0` (DomiNode Python SDK)
+- `dominusnode >= 0.1.0` (Dominus Node Python SDK)
 - `httpx >= 0.24.0`
 
 ## Quick Start
 
 ### Environment Variables
 
-Set up your DomiNode credentials:
+Set up your Dominus Node credentials:
 
 ```bash
 export DOMINUSNODE_API_KEY="dn_live_your_api_key_here"
@@ -80,7 +80,7 @@ tools = toolkit.get_tools()
 
 # Get tools by name
 fetch_tool = next(t for t in tools if t.name == "dominusnode_proxied_fetch")
-balance_tool = next(t for t in tools if t.name == "dominusnode_balance")
+balance_tool = next(t for t in tools if t.name == "dominusnode_check_balance")
 
 # Check balance
 print(balance_tool.run({}))
@@ -103,7 +103,7 @@ print(fetch_tool.run({
 
 ### `dominusnode_proxied_fetch`
 
-Makes HTTP requests through the DomiNode rotating proxy network.
+Makes HTTP requests through the Dominus Node rotating proxy network.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -119,21 +119,21 @@ Makes HTTP requests through the DomiNode rotating proxy network.
 - `file://`, `ftp://`, and other non-HTTP schemes are rejected
 - URLs with embedded credentials are rejected
 
-### `dominusnode_balance`
+### `dominusnode_check_balance`
 
-Check your DomiNode wallet balance. No input required.
+Check your Dominus Node wallet balance. No input required.
 
 Returns the balance in both USD and cents.
 
-### `dominusnode_usage`
+### `dominusnode_check_usage`
 
-Check your DomiNode proxy usage statistics. No input required.
+Check your Dominus Node proxy usage statistics. No input required.
 
 Returns total bandwidth used (GB), total cost, and request count.
 
-### `dominusnode_proxy_config`
+### `dominusnode_get_proxy_config`
 
-Get the DomiNode proxy configuration. No input required.
+Get the Dominus Node proxy configuration. No input required.
 
 Returns proxy endpoints, supported countries for geo-targeting, blocked countries, rotation intervals, and available geo-targeting features (state, city, ASN).
 
@@ -149,7 +149,7 @@ async def main():
     toolkit = DominusNodeToolkit(api_key="dn_live_your_key")
     tools = toolkit.get_tools()
 
-    balance_tool = next(t for t in tools if t.name == "dominusnode_balance")
+    balance_tool = next(t for t in tools if t.name == "dominusnode_check_balance")
     fetch_tool = next(t for t in tools if t.name == "dominusnode_proxied_fetch")
 
     # Async balance check
@@ -193,12 +193,12 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-## Pricing Reference
+## Pricing
 
-| Proxy Type | Cost to You | Sell Price | Margin |
-|-----------|-------------|------------|--------|
-| Datacenter | $0.012/GB | $3.00/GB | 99.6% |
-| Residential | $4.00/GB | $5.00/GB | 20% |
+| Proxy Type | Price |
+|-----------|-------|
+| Datacenter | $3/GB |
+| Residential | $5/GB |
 
 ## License
 

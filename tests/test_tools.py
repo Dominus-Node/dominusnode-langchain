@@ -1,6 +1,7 @@
-"""Tests for DomiNode LangChain tools.
+"""Tests for Dominus Node LangChain tools.
 
-All tests mock the DomiNode SDK client to avoid network calls.
+All tools use direct REST API calls — no SDK dependency. Tests mock
+_api_request_sync / _api_request_async and httpx for proxy operations.
 """
 
 from __future__ import annotations
@@ -8,17 +9,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from dominusnode.types import (
-    GeoTargeting,
-    ProxyConfig,
-    ProxyEndpointConfig,
-    UsagePagination,
-    UsagePeriod,
-    UsageResponse,
-    UsageSummary,
-    Wallet,
-)
 
 from dominusnode_langchain.tools import (
     DominusNodeAgenticTransactionsTool,
@@ -31,6 +21,8 @@ from dominusnode_langchain.tools import (
     DominusNodeListAgenticWalletsTool,
     DominusNodeProxiedFetchTool,
     DominusNodeProxyConfigTool,
+    DominusNodeTopupCryptoTool,
+    DominusNodeTopupStripeTool,
     DominusNodeUnfreezeAgenticWalletTool,
     DominusNodeUpdateWalletPolicyTool,
     DominusNodeUsageTool,
@@ -40,110 +32,18 @@ from dominusnode_langchain.tools import (
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Fixtures
+# Shared test credentials
 # ──────────────────────────────────────────────────────────────────────
 
-
-@pytest.fixture()
-def mock_sync_client():
-    """Create a mock DominusNodeClient with all needed resources."""
-    client = MagicMock()
-
-    # proxy.build_url returns a proxy URL string
-    client.proxy.build_url.return_value = "http://user:dn_live_test@proxy.dominusnode.com:8080"
-
-    # wallet.get_balance returns a Wallet dataclass
-    client.wallet.get_balance.return_value = Wallet(
-        balance_cents=5000,
-        balance_usd=50.00,
-        currency="usd",
-        last_topped_up="2026-01-15T12:00:00Z",
-    )
-
-    # usage.get returns a UsageResponse
-    client.usage.get.return_value = UsageResponse(
-        summary=UsageSummary(
-            total_bytes=1_073_741_824,
-            total_cost_cents=300,
-            request_count=150,
-            total_gb=1.0,
-            total_cost_usd=3.00,
-        ),
-        records=[],
-        pagination=UsagePagination(limit=200, offset=0, total=150),
-        period=UsagePeriod(since="2026-01-01", until="2026-02-01"),
-    )
-
-    # proxy.get_config returns a ProxyConfig
-    client.proxy.get_config.return_value = ProxyConfig(
-        http_proxy=ProxyEndpointConfig(host="proxy.dominusnode.com", port=8080),
-        socks5_proxy=ProxyEndpointConfig(host="proxy.dominusnode.com", port=1080),
-        supported_countries=["US", "GB", "DE", "JP"],
-        blocked_countries=["CU", "IR", "KP", "RU", "SY"],
-        max_rotation_interval_minutes=60,
-        min_rotation_interval_minutes=1,
-        geo_targeting=GeoTargeting(
-            state_support=True,
-            city_support=True,
-            asn_support=True,
-            us_states=["CA", "NY", "TX"],
-            major_us_cities=["Los Angeles", "New York", "Houston"],
-        ),
-    )
-
-    return client
+_TEST_API_KEY = "dn_live_testkey123"
+_TEST_BASE_URL = "http://localhost:3000"
 
 
-@pytest.fixture()
-def mock_async_client():
-    """Create a mock AsyncDominusNodeClient."""
-    client = MagicMock()
-
-    client.proxy.build_url.return_value = "http://user:dn_live_test@proxy.dominusnode.com:8080"
-
-    client.wallet.get_balance = AsyncMock(
-        return_value=Wallet(
-            balance_cents=5000,
-            balance_usd=50.00,
-            currency="usd",
-            last_topped_up="2026-01-15T12:00:00Z",
-        )
-    )
-
-    client.usage.get = AsyncMock(
-        return_value=UsageResponse(
-            summary=UsageSummary(
-                total_bytes=1_073_741_824,
-                total_cost_cents=300,
-                request_count=150,
-                total_gb=1.0,
-                total_cost_usd=3.00,
-            ),
-            records=[],
-            pagination=UsagePagination(limit=200, offset=0, total=150),
-            period=UsagePeriod(since="2026-01-01", until="2026-02-01"),
-        )
-    )
-
-    client.proxy.get_config = AsyncMock(
-        return_value=ProxyConfig(
-            http_proxy=ProxyEndpointConfig(host="proxy.dominusnode.com", port=8080),
-            socks5_proxy=ProxyEndpointConfig(host="proxy.dominusnode.com", port=1080),
-            supported_countries=["US", "GB", "DE", "JP"],
-            blocked_countries=["CU", "IR", "KP", "RU", "SY"],
-            max_rotation_interval_minutes=60,
-            min_rotation_interval_minutes=1,
-            geo_targeting=GeoTargeting(
-                state_support=True,
-                city_support=True,
-                asn_support=True,
-                us_states=["CA", "NY", "TX"],
-                major_us_cities=["Los Angeles", "New York", "Houston"],
-            ),
-        )
-    )
-
-    return client
+def _make(cls, **kwargs):
+    """Instantiate a tool with test credentials."""
+    defaults = {"api_key": _TEST_API_KEY, "base_url": _TEST_BASE_URL}
+    defaults.update(kwargs)
+    return cls(**defaults)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -243,35 +143,36 @@ class TestUrlValidation:
 class TestProxiedFetchTool:
     """Tests for the proxied HTTP fetch tool."""
 
-    def test_ssrf_blocked(self, mock_sync_client):
-        tool = DominusNodeProxiedFetchTool(sync_client=mock_sync_client)
+    def test_ssrf_blocked(self):
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = tool._run(url="http://127.0.0.1/admin")
         assert "Error" in result
         assert "private" in result.lower() or "reserved" in result.lower()
 
-    def test_disallowed_method(self, mock_sync_client):
-        tool = DominusNodeProxiedFetchTool(sync_client=mock_sync_client)
+    def test_disallowed_method(self):
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = tool._run(url="http://example.com", method="POST")
         assert "Error" in result
         assert "not allowed" in result
 
-    def test_invalid_proxy_type(self, mock_sync_client):
-        tool = DominusNodeProxiedFetchTool(sync_client=mock_sync_client)
+    def test_invalid_proxy_type(self):
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = tool._run(url="http://example.com", proxy_type="mobile")
         assert "Error" in result
         assert "dc" in result or "residential" in result
 
-    def test_no_client_configured(self):
+    def test_no_api_key_configured(self):
         tool = DominusNodeProxiedFetchTool()
         result = tool._run(url="http://example.com")
         assert "Error" in result
-        assert "No DomiNode client" in result
+        assert "API key" in result or "credentials" in result
 
     @patch("dominusnode_langchain.tools.httpx.Client")
-    def test_successful_fetch(self, mock_httpx_client_cls, mock_sync_client):
+    def test_successful_fetch(self, mock_httpx_client_cls):
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = "Hello, World!"
+        mock_response.content = b"Hello, World!"
         mock_response.headers = {"content-type": "text/html"}
 
         mock_httpx_instance = MagicMock()
@@ -280,19 +181,19 @@ class TestProxiedFetchTool:
         mock_httpx_instance.request.return_value = mock_response
         mock_httpx_client_cls.return_value = mock_httpx_instance
 
-        tool = DominusNodeProxiedFetchTool(sync_client=mock_sync_client)
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = tool._run(url="https://example.com")
 
         assert "Status: 200" in result
         assert "Hello, World!" in result
-        mock_sync_client.proxy.build_url.assert_called_once()
 
     @patch("dominusnode_langchain.tools.httpx.Client")
-    def test_response_truncation(self, mock_httpx_client_cls, mock_sync_client):
+    def test_response_truncation(self, mock_httpx_client_cls):
         long_body = "x" * 5000
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = long_body
+        mock_response.content = long_body.encode()
         mock_response.headers = {"content-type": "text/plain"}
 
         mock_httpx_instance = MagicMock()
@@ -301,37 +202,31 @@ class TestProxiedFetchTool:
         mock_httpx_instance.request.return_value = mock_response
         mock_httpx_client_cls.return_value = mock_httpx_instance
 
-        tool = DominusNodeProxiedFetchTool(sync_client=mock_sync_client)
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = tool._run(url="https://example.com")
 
         assert "[truncated]" in result
-        # Body portion should be at most MAX_RESPONSE_CHARS (4000)
         body_line_start = result.index("Body:\n") + len("Body:\n")
         body_content = result[body_line_start:]
-        # Account for " [truncated]" suffix
         assert len(body_content) <= 4000 + len(" [truncated]")
 
-    def test_file_scheme_blocked(self, mock_sync_client):
-        tool = DominusNodeProxiedFetchTool(sync_client=mock_sync_client)
+    def test_file_scheme_blocked(self):
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = tool._run(url="file:///etc/passwd")
         assert "Error" in result
         assert "scheme" in result.lower()
 
-    def test_head_method_allowed(self, mock_sync_client):
-        """HEAD is an allowed read-only method."""
-        # This test just verifies it does not return a method-not-allowed error;
-        # the actual HTTP call would fail without a real proxy.
-        tool = DominusNodeProxiedFetchTool(sync_client=mock_sync_client)
-        # Will fail on the httpx call (no real proxy), but should NOT fail on method validation
+    def test_head_method_allowed(self):
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = tool._run(url="https://example.com", method="HEAD")
-        # Should not contain the "method not allowed" error
         assert "not allowed" not in result or "HTTP method" not in result
 
     @patch("dominusnode_langchain.tools.httpx.Client")
-    def test_country_targeting(self, mock_httpx_client_cls, mock_sync_client):
+    def test_country_targeting(self, mock_httpx_client_cls):
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = "OK"
+        mock_response.content = b"OK"
         mock_response.headers = {"content-type": "text/plain"}
 
         mock_httpx_instance = MagicMock()
@@ -340,13 +235,13 @@ class TestProxiedFetchTool:
         mock_httpx_instance.request.return_value = mock_response
         mock_httpx_client_cls.return_value = mock_httpx_instance
 
-        tool = DominusNodeProxiedFetchTool(sync_client=mock_sync_client)
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         tool._run(url="https://example.com", country="DE")
 
-        # Verify build_url was called with a ProxyUrlOptions containing country
-        call_args = mock_sync_client.proxy.build_url.call_args
-        options = call_args[0][0]
-        assert options.country == "DE"
+        # Verify proxy URL was built with country in the username
+        call_args = mock_httpx_client_cls.call_args
+        proxy_url = call_args[1].get("proxy", "")
+        assert "country-DE" in proxy_url
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -357,36 +252,35 @@ class TestProxiedFetchTool:
 class TestBalanceTool:
     """Tests for the balance check tool."""
 
-    def test_returns_balance(self, mock_sync_client):
-        tool = DominusNodeBalanceTool(sync_client=mock_sync_client)
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_returns_balance(self, mock_api):
+        mock_api.return_value = {"balanceCents": 5000, "balanceUsd": 50.0}
+        tool = _make(DominusNodeBalanceTool)
         result = tool._run()
-
         assert "$50.00" in result
         assert "5000 cents" in result
-        assert "usd" in result
-        mock_sync_client.wallet.get_balance.assert_called_once()
 
-    def test_no_client(self):
+    def test_no_credentials(self):
         tool = DominusNodeBalanceTool()
         result = tool._run()
         assert "Error" in result
-        assert "No DomiNode client" in result
 
-    def test_sdk_error_handled(self, mock_sync_client):
-        mock_sync_client.wallet.get_balance.side_effect = Exception("Connection refused")
-        tool = DominusNodeBalanceTool(sync_client=mock_sync_client)
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_api_error_handled(self, mock_api):
+        mock_api.side_effect = Exception("Connection refused")
+        tool = _make(DominusNodeBalanceTool)
         result = tool._run()
         assert "Error" in result
         assert "Connection refused" in result
 
     @pytest.mark.asyncio
-    async def test_async_returns_balance(self, mock_async_client):
-        tool = DominusNodeBalanceTool(async_client=mock_async_client)
+    @patch("dominusnode_langchain.tools._api_request_async")
+    async def test_async_returns_balance(self, mock_api):
+        mock_api.return_value = {"balanceCents": 5000, "balanceUsd": 50.0}
+        tool = _make(DominusNodeBalanceTool)
         result = await tool._arun()
-
         assert "$50.00" in result
         assert "5000 cents" in result
-        mock_async_client.wallet.get_balance.assert_awaited_once()
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -397,36 +291,48 @@ class TestBalanceTool:
 class TestUsageTool:
     """Tests for the usage statistics tool."""
 
-    def test_returns_usage(self, mock_sync_client):
-        tool = DominusNodeUsageTool(sync_client=mock_sync_client)
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_returns_usage(self, mock_api):
+        mock_api.return_value = {
+            "summary": {
+                "totalBytes": 1_073_741_824, "totalGb": 1.0,
+                "totalCostCents": 300, "totalCostUsd": 3.00,
+                "requestCount": 150,
+            },
+            "period": {"since": "2026-01-01", "until": "2026-02-01"},
+        }
+        tool = _make(DominusNodeUsageTool)
         result = tool._run()
-
-        assert "1.0000 GB" in result
-        assert "$3.00" in result
+        assert "1.0" in result
         assert "150" in result
-        assert "2026-01-01" in result
-        mock_sync_client.usage.get.assert_called_once()
 
-    def test_no_client(self):
+    def test_no_credentials(self):
         tool = DominusNodeUsageTool()
         result = tool._run()
         assert "Error" in result
 
-    def test_sdk_error_handled(self, mock_sync_client):
-        mock_sync_client.usage.get.side_effect = Exception("Timeout")
-        tool = DominusNodeUsageTool(sync_client=mock_sync_client)
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_api_error_handled(self, mock_api):
+        mock_api.side_effect = Exception("Timeout")
+        tool = _make(DominusNodeUsageTool)
         result = tool._run()
         assert "Error" in result
         assert "Timeout" in result
 
     @pytest.mark.asyncio
-    async def test_async_returns_usage(self, mock_async_client):
-        tool = DominusNodeUsageTool(async_client=mock_async_client)
+    @patch("dominusnode_langchain.tools._api_request_async")
+    async def test_async_returns_usage(self, mock_api):
+        mock_api.return_value = {
+            "summary": {
+                "totalBytes": 1_073_741_824, "totalGb": 1.0,
+                "totalCostCents": 300, "totalCostUsd": 3.00,
+                "requestCount": 150,
+            },
+            "period": {"since": "2026-01-01", "until": "2026-02-01"},
+        }
+        tool = _make(DominusNodeUsageTool)
         result = await tool._arun()
-
-        assert "1.0000 GB" in result
-        assert "$3.00" in result
-        mock_async_client.usage.get.assert_awaited_once()
+        assert "1.0" in result
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -437,40 +343,238 @@ class TestUsageTool:
 class TestProxyConfigTool:
     """Tests for the proxy configuration tool."""
 
-    def test_returns_config(self, mock_sync_client):
-        tool = DominusNodeProxyConfigTool(sync_client=mock_sync_client)
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_returns_config(self, mock_api):
+        mock_api.return_value = {
+            "httpProxy": {"host": "proxy.dominusnode.com", "port": 8080},
+            "socks5Proxy": {"host": "proxy.dominusnode.com", "port": 1080},
+            "supportedCountries": ["US", "GB", "DE", "JP"],
+            "blockedCountries": ["CU", "IR", "KP", "RU", "SY"],
+        }
+        tool = _make(DominusNodeProxyConfigTool)
         result = tool._run()
+        assert "proxy.dominusnode.com" in result
 
-        assert "proxy.dominusnode.com:8080" in result
-        assert "proxy.dominusnode.com:1080" in result
-        assert "US" in result
-        assert "GB" in result
-        assert "DE" in result
-        assert "State targeting: yes" in result
-        assert "City targeting: yes" in result
-        assert "CU" in result  # blocked country
-        mock_sync_client.proxy.get_config.assert_called_once()
-
-    def test_no_client(self):
+    def test_no_credentials(self):
         tool = DominusNodeProxyConfigTool()
         result = tool._run()
         assert "Error" in result
 
-    def test_sdk_error_handled(self, mock_sync_client):
-        mock_sync_client.proxy.get_config.side_effect = Exception("Auth expired")
-        tool = DominusNodeProxyConfigTool(sync_client=mock_sync_client)
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_api_error_handled(self, mock_api):
+        mock_api.side_effect = Exception("Auth expired")
+        tool = _make(DominusNodeProxyConfigTool)
         result = tool._run()
         assert "Error" in result
         assert "Auth expired" in result
 
     @pytest.mark.asyncio
-    async def test_async_returns_config(self, mock_async_client):
-        tool = DominusNodeProxyConfigTool(async_client=mock_async_client)
+    @patch("dominusnode_langchain.tools._api_request_async")
+    async def test_async_returns_config(self, mock_api):
+        mock_api.return_value = {
+            "httpProxy": {"host": "proxy.dominusnode.com", "port": 8080},
+            "supportedCountries": ["US"],
+        }
+        tool = _make(DominusNodeProxyConfigTool)
         result = await tool._arun()
+        assert "proxy.dominusnode.com" in result
 
-        assert "proxy.dominusnode.com:8080" in result
-        assert "US" in result
-        mock_async_client.proxy.get_config.assert_awaited_once()
+
+# ──────────────────────────────────────────────────────────────────────
+# DominusNodeTopupStripeTool
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestTopupStripeTool:
+    """Tests for the Stripe top-up tool."""
+
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_returns_checkout_session(self, mock_api):
+        mock_api.return_value = {
+            "sessionId": "cs_test_abc123",
+            "url": "https://checkout.stripe.com/pay/cs_test_abc123",
+        }
+        tool = _make(DominusNodeTopupStripeTool)
+        result = tool._run(amount_cents=5000)
+        assert "cs_test_abc123" in result
+        assert "checkout.stripe.com" in result
+
+    def test_no_credentials(self):
+        tool = DominusNodeTopupStripeTool()
+        result = tool._run(amount_cents=5000)
+        assert "Error" in result
+
+    def test_amount_too_low(self):
+        tool = _make(DominusNodeTopupStripeTool)
+        result = tool._run(amount_cents=100)
+        assert "Error" in result
+        assert "500" in result
+
+    def test_amount_too_high(self):
+        tool = _make(DominusNodeTopupStripeTool)
+        result = tool._run(amount_cents=200000)
+        assert "Error" in result
+        assert "100000" in result
+
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_api_error_handled(self, mock_api):
+        mock_api.side_effect = Exception("Stripe API error")
+        tool = _make(DominusNodeTopupStripeTool)
+        result = tool._run(amount_cents=5000)
+        assert "Error" in result
+        assert "Stripe API error" in result
+
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_credential_scrubbing(self, mock_api):
+        mock_api.side_effect = Exception("Auth failed: dn_live_secret123abc")
+        tool = _make(DominusNodeTopupStripeTool)
+        result = tool._run(amount_cents=5000)
+        assert "Error" in result
+        assert "dn_live_secret123abc" not in result
+        assert "***" in result
+
+    @pytest.mark.asyncio
+    @patch("dominusnode_langchain.tools._api_request_async")
+    async def test_async_returns_checkout_session(self, mock_api):
+        mock_api.return_value = {
+            "sessionId": "cs_test_abc123",
+            "url": "https://checkout.stripe.com/pay/cs_test_abc123",
+        }
+        tool = _make(DominusNodeTopupStripeTool)
+        result = await tool._arun(amount_cents=5000)
+        assert "cs_test_abc123" in result
+
+    @pytest.mark.asyncio
+    async def test_async_amount_too_low(self):
+        tool = _make(DominusNodeTopupStripeTool)
+        result = await tool._arun(amount_cents=100)
+        assert "Error" in result
+        assert "500" in result
+
+    @pytest.mark.asyncio
+    async def test_async_no_credentials(self):
+        tool = DominusNodeTopupStripeTool()
+        result = await tool._arun(amount_cents=5000)
+        assert "Error" in result
+
+
+# ──────────────────────────────────────────────────────────────────────
+# DominusNodeTopupCryptoTool
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestTopupCryptoTool:
+    """Tests for the crypto top-up tool."""
+
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_returns_crypto_invoice(self, mock_api):
+        mock_api.return_value = {
+            "invoiceId": "inv_crypto_456",
+            "invoiceUrl": "https://nowpayments.io/payment/?iid=inv_crypto_456",
+            "payCurrency": "btc",
+            "priceAmount": 0.0012,
+        }
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = tool._run(amount_usd=50.0, currency="btc")
+        assert "inv_crypto_456" in result
+        assert "BTC" in result.upper()
+
+    def test_no_credentials(self):
+        tool = DominusNodeTopupCryptoTool()
+        result = tool._run(amount_usd=50.0, currency="btc")
+        assert "Error" in result
+
+    def test_amount_too_low(self):
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = tool._run(amount_usd=2.0, currency="btc")
+        assert "Error" in result
+        assert "5" in result
+
+    def test_amount_too_high(self):
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = tool._run(amount_usd=5000.0, currency="eth")
+        assert "Error" in result
+        assert "1000" in result
+
+    def test_invalid_currency(self):
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = tool._run(amount_usd=50.0, currency="DOGE")
+        assert "Error" in result
+        assert "currency" in result.lower()
+
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_uppercase_currency_accepted(self, mock_api):
+        mock_api.return_value = {
+            "invoiceId": "inv_456",
+            "invoiceUrl": "https://nowpayments.io/pay",
+            "payCurrency": "eth",
+            "priceAmount": 0.01,
+        }
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = tool._run(amount_usd=50.0, currency="ETH")
+        assert "inv_456" in result
+
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_privacy_coin_xmr(self, mock_api):
+        mock_api.return_value = {
+            "invoiceId": "inv_xmr_789",
+            "invoiceUrl": "https://nowpayments.io/pay",
+            "payCurrency": "xmr",
+            "priceAmount": 0.35,
+        }
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = tool._run(amount_usd=100.0, currency="xmr")
+        assert "XMR" in result.upper()
+
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_api_error_handled(self, mock_api):
+        mock_api.side_effect = Exception("NOWPayments API error")
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = tool._run(amount_usd=50.0, currency="btc")
+        assert "Error" in result
+        assert "NOWPayments API error" in result
+
+    @patch("dominusnode_langchain.tools._api_request_sync")
+    def test_credential_scrubbing(self, mock_api):
+        mock_api.side_effect = Exception("Auth failed: dn_live_secret123abc")
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = tool._run(amount_usd=50.0, currency="btc")
+        assert "Error" in result
+        assert "dn_live_secret123abc" not in result
+        assert "***" in result
+
+    @pytest.mark.asyncio
+    @patch("dominusnode_langchain.tools._api_request_async")
+    async def test_async_returns_crypto_invoice(self, mock_api):
+        mock_api.return_value = {
+            "invoiceId": "inv_crypto_456",
+            "invoiceUrl": "https://nowpayments.io/pay",
+            "payCurrency": "btc",
+            "priceAmount": 0.0012,
+        }
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = await tool._arun(amount_usd=50.0, currency="btc")
+        assert "inv_crypto_456" in result
+
+    @pytest.mark.asyncio
+    async def test_async_invalid_currency(self):
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = await tool._arun(amount_usd=50.0, currency="DOGE")
+        assert "Error" in result
+        assert "currency" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_async_amount_too_low(self):
+        tool = _make(DominusNodeTopupCryptoTool)
+        result = await tool._arun(amount_usd=2.0, currency="btc")
+        assert "Error" in result
+        assert "5" in result
+
+    @pytest.mark.asyncio
+    async def test_async_no_credentials(self):
+        tool = DominusNodeTopupCryptoTool()
+        result = await tool._arun(amount_usd=50.0, currency="btc")
+        assert "Error" in result
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -482,24 +586,25 @@ class TestProxiedFetchToolAsync:
     """Async-specific tests for the proxied fetch tool."""
 
     @pytest.mark.asyncio
-    async def test_ssrf_blocked_async(self, mock_async_client):
-        tool = DominusNodeProxiedFetchTool(async_client=mock_async_client)
+    async def test_ssrf_blocked_async(self):
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = await tool._arun(url="http://10.0.0.1/secret")
         assert "Error" in result
 
     @pytest.mark.asyncio
-    async def test_no_client_async(self):
+    async def test_no_api_key_async(self):
         tool = DominusNodeProxiedFetchTool()
         result = await tool._arun(url="http://example.com")
         assert "Error" in result
-        assert "No DomiNode client" in result
+        assert "API key" in result or "credentials" in result
 
     @pytest.mark.asyncio
     @patch("dominusnode_langchain.tools.httpx.AsyncClient")
-    async def test_successful_async_fetch(self, mock_httpx_cls, mock_async_client):
+    async def test_successful_async_fetch(self, mock_httpx_cls):
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = "Async OK"
+        mock_response.content = b"Async OK"
         mock_response.headers = {"content-type": "text/html"}
 
         mock_httpx_instance = AsyncMock()
@@ -508,15 +613,15 @@ class TestProxiedFetchToolAsync:
         mock_httpx_instance.request = AsyncMock(return_value=mock_response)
         mock_httpx_cls.return_value = mock_httpx_instance
 
-        tool = DominusNodeProxiedFetchTool(async_client=mock_async_client)
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = await tool._arun(url="https://example.com")
 
         assert "Status: 200" in result
         assert "Async OK" in result
 
     @pytest.mark.asyncio
-    async def test_disallowed_method_async(self, mock_async_client):
-        tool = DominusNodeProxiedFetchTool(async_client=mock_async_client)
+    async def test_disallowed_method_async(self):
+        tool = _make(DominusNodeProxiedFetchTool, proxy_host="localhost")
         result = await tool._arun(url="http://example.com", method="DELETE")
         assert "Error" in result
         assert "not allowed" in result

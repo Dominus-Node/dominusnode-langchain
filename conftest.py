@@ -52,6 +52,14 @@ class ProxyUrlOptions(_FlexType):
     pass
 
 
+class StripeCheckout(_FlexType):
+    pass
+
+
+class CryptoInvoice(_FlexType):
+    pass
+
+
 # Create mock dominusnode module hierarchy
 dominusnode_mock = MagicMock()
 dominusnode_types_mock = MagicMock()
@@ -66,6 +74,8 @@ dominusnode_types_mock.UsagePagination = UsagePagination
 dominusnode_types_mock.UsagePeriod = UsagePeriod
 dominusnode_types_mock.UsageResponse = UsageResponse
 dominusnode_types_mock.ProxyUrlOptions = ProxyUrlOptions
+dominusnode_types_mock.StripeCheckout = StripeCheckout
+dominusnode_types_mock.CryptoInvoice = CryptoInvoice
 
 # Wire DominusNodeClient and AsyncDominusNodeClient as MagicMock classes
 dominusnode_mock.DominusNodeClient = MagicMock

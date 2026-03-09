@@ -1,8 +1,8 @@
-"""DomiNode LangChain Toolkit -- bundles all DomiNode tools for agent use.
+"""Dominus Node LangChain Toolkit -- bundles all 53 Dominus Node tools for agent use.
 
-The :class:`DominusNodeToolkit` creates a :class:`DominusNodeClient` internally
-and injects it into each tool so that a single authenticated session is shared
-across all tools in a LangChain agent.
+The :class:`DominusNodeToolkit` injects API credentials into each tool so that
+a single authenticated configuration is shared across all tools in a LangChain
+agent.  All tools use direct REST calls (no SDK dependency).
 
 Example::
 
@@ -22,39 +22,83 @@ from typing import List, Optional
 
 from langchain_core.tools import BaseTool, BaseToolkit
 
-from dominusnode import AsyncDominusNodeClient, DominusNodeClient
-
 from .tools import (
-    DominusNodeAgenticTransactionsTool,
-    DominusNodeAgenticWalletBalanceTool,
-    DominusNodeBalanceTool,
-    DominusNodeCreateAgenticWalletTool,
-    DominusNodeDeleteAgenticWalletTool,
-    DominusNodeFreezeAgenticWalletTool,
-    DominusNodeFundAgenticWalletTool,
-    DominusNodeListAgenticWalletsTool,
+    # Proxy (3)
     DominusNodeProxiedFetchTool,
     DominusNodeProxyConfigTool,
+    DominusNodeProxyStatusTool,
+    # Sessions (1)
+    DominusNodeListSessionsTool,
+    # Wallet (8)
+    DominusNodeBalanceTool,
+    DominusNodeGetTransactionsTool,
+    DominusNodeGetForecastTool,
     DominusNodeTopupPaypalTool,
-    DominusNodeUnfreezeAgenticWalletTool,
-    DominusNodeUpdateWalletPolicyTool,
-    DominusNodeUsageTool,
+    DominusNodeTopupStripeTool,
+    DominusNodeTopupCryptoTool,
+    DominusNodeCheckPaymentTool,
     DominusNodeX402InfoTool,
+    # Usage (3)
+    DominusNodeUsageTool,
+    DominusNodeDailyUsageTool,
+    DominusNodeTopHostsTool,
+    # Account (6)
+    DominusNodeRegisterTool,
+    DominusNodeLoginTool,
+    DominusNodeGetAccountInfoTool,
+    DominusNodeVerifyEmailTool,
+    DominusNodeResendVerificationTool,
+    DominusNodeUpdatePasswordTool,
+    # API Keys (3)
+    DominusNodeListKeysTool,
+    DominusNodeCreateKeyTool,
+    DominusNodeRevokeKeyTool,
+    # Plans (3)
+    DominusNodeGetPlanTool,
+    DominusNodeListPlansTool,
+    DominusNodeChangePlanTool,
+    # Agentic Wallets (9)
+    DominusNodeCreateAgenticWalletTool,
+    DominusNodeFundAgenticWalletTool,
+    DominusNodeAgenticWalletBalanceTool,
+    DominusNodeListAgenticWalletsTool,
+    DominusNodeAgenticTransactionsTool,
+    DominusNodeFreezeAgenticWalletTool,
+    DominusNodeUnfreezeAgenticWalletTool,
+    DominusNodeDeleteAgenticWalletTool,
+    DominusNodeUpdateWalletPolicyTool,
+    # Teams (17)
+    DominusNodeCreateTeamTool,
+    DominusNodeListTeamsTool,
+    DominusNodeTeamDetailsTool,
+    DominusNodeUpdateTeamTool,
+    DominusNodeTeamDeleteTool,
+    DominusNodeTeamFundTool,
+    DominusNodeTeamCreateKeyTool,
+    DominusNodeTeamRevokeKeyTool,
+    DominusNodeTeamListKeysTool,
+    DominusNodeTeamUsageTool,
+    DominusNodeTeamListMembersTool,
+    DominusNodeTeamAddMemberTool,
+    DominusNodeTeamRemoveMemberTool,
+    DominusNodeUpdateTeamMemberRoleTool,
+    DominusNodeTeamInviteMemberTool,
+    DominusNodeTeamListInvitesTool,
+    DominusNodeTeamCancelInviteTool,
 )
 
 
 class DominusNodeToolkit(BaseToolkit):
-    """LangChain toolkit that provides all DomiNode proxy service tools.
+    """LangChain toolkit that provides all 53 Dominus Node proxy service tools.
 
-    Creates and manages a :class:`DominusNodeClient` (sync) and optionally
-    an :class:`AsyncDominusNodeClient` (async) for use by LangChain agents.
+    Injects API key and base URL into each tool for direct REST API calls.
 
     Args:
-        api_key: DomiNode API key (``dn_live_...``).  Falls back to the
+        api_key: Dominus Node API key (``dn_live_...``).  Falls back to the
             ``DOMINUSNODE_API_KEY`` environment variable if not provided.
-        base_url: Base URL for the DomiNode REST API.  Falls back to
+        base_url: Base URL for the Dominus Node REST API.  Falls back to
             ``DOMINUSNODE_BASE_URL`` or the SDK default.
-        proxy_host: Hostname of the DomiNode proxy server.  Falls back to
+        proxy_host: Hostname of the Dominus Node proxy server.  Falls back to
             ``DOMINUSNODE_PROXY_HOST`` or the SDK default.
         http_proxy_port: HTTP proxy port (default 8080).
         socks5_proxy_port: SOCKS5 proxy port (default 1080).
@@ -63,9 +107,6 @@ class DominusNodeToolkit(BaseToolkit):
         ValueError: If no API key is provided or found in environment.
     """
 
-    # Stored so tools can reference them; not exposed to LLM
-    _sync_client: Optional[DominusNodeClient] = None
-    _async_client: Optional[AsyncDominusNodeClient] = None
     _tools: Optional[List[BaseTool]] = None
 
     model_config = {"arbitrary_types_allowed": True}
@@ -78,13 +119,14 @@ class DominusNodeToolkit(BaseToolkit):
         proxy_host: Optional[str] = None,
         http_proxy_port: int = 8080,
         socks5_proxy_port: int = 1080,
+        agent_secret: Optional[str] = None,
     ) -> None:
         super().__init__()
 
         resolved_key = api_key or os.environ.get("DOMINUSNODE_API_KEY")
         if not resolved_key:
             raise ValueError(
-                "A DomiNode API key is required.  Pass api_key= or set the "
+                "A Dominus Node API key is required.  Pass api_key= or set the "
                 "DOMINUSNODE_API_KEY environment variable."
             )
 
@@ -95,101 +137,109 @@ class DominusNodeToolkit(BaseToolkit):
             "DOMINUSNODE_PROXY_HOST", "proxy.dominusnode.com"
         )
 
-        # Store credentials for agentic wallet tools (direct REST API calls)
         self._api_key = resolved_key
         self._base_url = resolved_base
+        self._agent_secret = agent_secret or os.environ.get("DOMINUSNODE_AGENT_SECRET")
 
-        # Create sync client
-        self._sync_client = DominusNodeClient(
-            base_url=resolved_base,
-            api_key=resolved_key,
-            proxy_host=resolved_proxy_host,
-            http_proxy_port=http_proxy_port,
-            socks5_proxy_port=socks5_proxy_port,
-        )
-
-        # Create async client (deferred connect -- will connect in __aenter__)
-        self._async_client = AsyncDominusNodeClient(
-            base_url=resolved_base,
-            api_key=resolved_key,
-            proxy_host=resolved_proxy_host,
-            http_proxy_port=http_proxy_port,
-            socks5_proxy_port=socks5_proxy_port,
-        )
+        # Store proxy host/port for env-based tools
+        os.environ.setdefault("DOMINUSNODE_PROXY_HOST", resolved_proxy_host)
+        os.environ.setdefault("DOMINUSNODE_PROXY_PORT", str(http_proxy_port))
 
         # Build tools once
         self._tools = self._build_tools()
 
     def _build_tools(self) -> List[BaseTool]:
-        """Construct tool instances with injected clients."""
-        fetch_tool = DominusNodeProxiedFetchTool(
-            sync_client=self._sync_client,
-            async_client=self._async_client,
-        )
-        balance_tool = DominusNodeBalanceTool(
-            sync_client=self._sync_client,
-            async_client=self._async_client,
-        )
-        usage_tool = DominusNodeUsageTool(
-            sync_client=self._sync_client,
-            async_client=self._async_client,
-        )
-        config_tool = DominusNodeProxyConfigTool(
-            sync_client=self._sync_client,
-            async_client=self._async_client,
-        )
-        topup_paypal_tool = DominusNodeTopupPaypalTool(
-            sync_client=self._sync_client,
-            async_client=self._async_client,
-        )
-        x402_info_tool = DominusNodeX402InfoTool(
-            sync_client=self._sync_client,
-            async_client=self._async_client,
-        )
-
-        # Agentic wallet tools use direct REST API calls
+        """Construct all 53 tool instances with injected credentials."""
         _ak = self._api_key
         _bu = self._base_url
-        create_wallet_tool = DominusNodeCreateAgenticWalletTool(api_key=_ak, base_url=_bu)
-        fund_wallet_tool = DominusNodeFundAgenticWalletTool(api_key=_ak, base_url=_bu)
-        wallet_balance_tool = DominusNodeAgenticWalletBalanceTool(api_key=_ak, base_url=_bu)
-        list_wallets_tool = DominusNodeListAgenticWalletsTool(api_key=_ak, base_url=_bu)
-        transactions_tool = DominusNodeAgenticTransactionsTool(api_key=_ak, base_url=_bu)
-        freeze_tool = DominusNodeFreezeAgenticWalletTool(api_key=_ak, base_url=_bu)
-        unfreeze_tool = DominusNodeUnfreezeAgenticWalletTool(api_key=_ak, base_url=_bu)
-        delete_wallet_tool = DominusNodeDeleteAgenticWalletTool(api_key=_ak, base_url=_bu)
-        update_policy_tool = DominusNodeUpdateWalletPolicyTool(api_key=_ak, base_url=_bu)
+        _as = self._agent_secret
+        _ph = os.environ.get("DOMINUSNODE_PROXY_HOST", "localhost")
+        _pp = int(os.environ.get("DOMINUSNODE_PROXY_PORT", "8080"))
+
+        # Helper for REST-API-based tools (authenticated)
+        def _rest(cls: type) -> BaseTool:
+            return cls(api_key=_ak, base_url=_bu, agent_secret=_as)
+
+        # Helper for proxy tools that need proxy host/port
+        def _proxy(cls: type) -> BaseTool:
+            return cls(api_key=_ak, base_url=_bu, agent_secret=_as,
+                       proxy_host=_ph, proxy_port=_pp)
+
+        # Helper for unauthenticated tools
+        def _unauth(cls: type) -> BaseTool:
+            return cls(base_url=_bu, agent_secret=_as)
 
         return [
-            fetch_tool,
-            balance_tool,
-            usage_tool,
-            config_tool,
-            topup_paypal_tool,
-            x402_info_tool,
-            create_wallet_tool,
-            fund_wallet_tool,
-            wallet_balance_tool,
-            list_wallets_tool,
-            transactions_tool,
-            freeze_tool,
-            unfreeze_tool,
-            delete_wallet_tool,
-            update_policy_tool,
+            # Proxy (3)
+            _proxy(DominusNodeProxiedFetchTool),
+            _rest(DominusNodeProxyConfigTool),
+            _rest(DominusNodeProxyStatusTool),
+            # Sessions (1)
+            _rest(DominusNodeListSessionsTool),
+            # Wallet (8)
+            _rest(DominusNodeBalanceTool),
+            _rest(DominusNodeGetTransactionsTool),
+            _rest(DominusNodeGetForecastTool),
+            _rest(DominusNodeTopupPaypalTool),
+            _rest(DominusNodeTopupStripeTool),
+            _rest(DominusNodeTopupCryptoTool),
+            _rest(DominusNodeCheckPaymentTool),
+            _rest(DominusNodeX402InfoTool),
+            # Usage (3)
+            _rest(DominusNodeUsageTool),
+            _rest(DominusNodeDailyUsageTool),
+            _rest(DominusNodeTopHostsTool),
+            # Account (6) -- register, login, verify_email are unauthenticated
+            _unauth(DominusNodeRegisterTool),
+            _unauth(DominusNodeLoginTool),
+            _rest(DominusNodeGetAccountInfoTool),
+            _unauth(DominusNodeVerifyEmailTool),
+            _rest(DominusNodeResendVerificationTool),
+            _rest(DominusNodeUpdatePasswordTool),
+            # API Keys (3)
+            _rest(DominusNodeListKeysTool),
+            _rest(DominusNodeCreateKeyTool),
+            _rest(DominusNodeRevokeKeyTool),
+            # Plans (3)
+            _rest(DominusNodeGetPlanTool),
+            _rest(DominusNodeListPlansTool),
+            _rest(DominusNodeChangePlanTool),
+            # Agentic Wallets (9)
+            _rest(DominusNodeCreateAgenticWalletTool),
+            _rest(DominusNodeFundAgenticWalletTool),
+            _rest(DominusNodeAgenticWalletBalanceTool),
+            _rest(DominusNodeListAgenticWalletsTool),
+            _rest(DominusNodeAgenticTransactionsTool),
+            _rest(DominusNodeFreezeAgenticWalletTool),
+            _rest(DominusNodeUnfreezeAgenticWalletTool),
+            _rest(DominusNodeDeleteAgenticWalletTool),
+            _rest(DominusNodeUpdateWalletPolicyTool),
+            # Teams (17)
+            _rest(DominusNodeCreateTeamTool),
+            _rest(DominusNodeListTeamsTool),
+            _rest(DominusNodeTeamDetailsTool),
+            _rest(DominusNodeUpdateTeamTool),
+            _rest(DominusNodeTeamDeleteTool),
+            _rest(DominusNodeTeamFundTool),
+            _rest(DominusNodeTeamCreateKeyTool),
+            _rest(DominusNodeTeamRevokeKeyTool),
+            _rest(DominusNodeTeamListKeysTool),
+            _rest(DominusNodeTeamUsageTool),
+            _rest(DominusNodeTeamListMembersTool),
+            _rest(DominusNodeTeamAddMemberTool),
+            _rest(DominusNodeTeamRemoveMemberTool),
+            _rest(DominusNodeUpdateTeamMemberRoleTool),
+            _rest(DominusNodeTeamInviteMemberTool),
+            _rest(DominusNodeTeamListInvitesTool),
+            _rest(DominusNodeTeamCancelInviteTool),
         ]
 
     def get_tools(self) -> List[BaseTool]:
-        """Return the list of DomiNode LangChain tools."""
+        """Return the list of 53 Dominus Node LangChain tools."""
         if self._tools is None:
             self._tools = self._build_tools()
         return list(self._tools)
 
     def close(self) -> None:
-        """Close the underlying SDK clients and release resources."""
-        if self._sync_client is not None:
-            self._sync_client.close()
-            self._sync_client = None
-        if self._async_client is not None:
-            self._async_client.close()
-            self._async_client = None
+        """Release resources."""
         self._tools = None
